@@ -1,0 +1,16 @@
+{
+  "name": "node-red-contrib-opcua-nipper",
+  "version": "1.0.0",
+  "description": "Eenvoudige OPC UA server node met variabelenlijst",
+  "keywords": ["node-red", "opcua", "opc ua", "server"],
+  "author": "jij",
+  "license": "MIT",
+  "dependencies": {
+    "node-opcua": "^2.120.0"
+  },
+  "node-red": {
+    "nodes": {
+      "opcua-server-Nipper": "opcua-server-Nipper.js"
+    }
+  }
+}
