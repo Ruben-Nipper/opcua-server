@@ -12,5 +12,13 @@
     "nodes": {
       "opcua-server-Nipper": "opcua-server-Nipper.js"
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ruben-Nipper/opcua-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ruben-Nipper/opcua-server/issues"
+  },
+  "homepage": "https://github.com/Ruben-Nipper/opcua-server#readme"
 }
