@@ -1,154 +1,348 @@
-<!-- opcua-server.html -->
+<!-- opcua-server-nipper.html -->
 <script type="text/javascript">
 (function () {
 
-    function defaultVars() { return []; }
+  /* ===== Helpers for CSV import and export of all fields ===== */
 
-    RED.nodes.registerType('opcua-server-nipper', {
-        category: 'nipper',
-        color: '#fcc91e',
-        icon: 'font-awesome/fa-server',
-        defaults: {
-            name: { value: "" },
-            port: { value: 4840, required: true, validate: RED.validators.number() },
-            resourcePath: { value: "/UA/MyServer", required: true },
-            hostname: { value: "0.0.0.0", required: true },
-            allowAnonymous: { value: true },
-            variables: { value: defaultVars() }
-        },
-        inputs: 1,
-        outputs: 1,
-        label: function () { return this.name || "opcua-server-nipper"; },
+  function readUiConfig() {
+    return {
+      name: $("#node-input-name").val() || "",
+      port: $("#node-input-port").val() || "",
+      resourcePath: $("#node-input-resourcePath").val() || "",
+      hostname: $("#node-input-hostname").val() || "",
+      allowAnonymous: $("#node-input-allowAnonymous").is(":checked")
+    };
+  }
 
-        oneditprepare: function () {
-            $("#node-input-allowAnonymous").prop("checked", !!this.allowAnonymous);
+  function writeUiConfig(cfg) {
+    if (!cfg) return;
+    if (cfg.name != null) $("#node-input-name").val(cfg.name);
+    if (cfg.port != null) $("#node-input-port").val(cfg.port);
+    if (cfg.resourcePath != null) $("#node-input-resourcePath").val(cfg.resourcePath);
+    if (cfg.hostname != null) $("#node-input-hostname").val(cfg.hostname);
+    if (cfg.allowAnonymous != null) {
+      $("#node-input-allowAnonymous").prop(
+        "checked",
+        String(cfg.allowAnonymous).toLowerCase() === "true"
+      );
+    }
+  }
 
-            let parsed = [];
-            try {
-                if (Array.isArray(this.variables)) {
-                    parsed = this.variables;
-                } else if (typeof this.variables === "string"&& this.variables.trim().length) {
-                    parsed = JSON.parse(this.variables);
-                }
-            } catch (e) {
-                parsed = [];
-            }
+  function escapeCsv(s) {
+    const t = String(s == null ? "" : s);
+    if (/[",\r\n]/.test(t)) return '"' + t.replace(/"/g, '""') + '"';
+    return t;
+  }
 
-            const list = $("#node-input-variables-container")
-                .css('min-height', '240px')
-                .editableList({
-                    addItem: function (container, i, item) {
-                        item = item || {};
+  function splitCsvLine(line) {
+    const out = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"') {
+          if (line[i+1] === '"') { cur += '"'; i++; } else { inQ = false; }
+        } else cur += ch;
+      } else {
+        if (ch === '"') inQ = true;
+        else if (ch === ',') { out.push(cur); cur = ""; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  }
 
-                        const row = $('<div/>', { class: 'opcua-var-row' }).appendTo(container);
-
-                        $('<label/>', { class: 'opcua-lbl', text: 'IXON-VAR' }).appendTo(row);
-                        const name = $('<input/>', {
-                            type: 'text', class: 'opcua-inp', style: 'width:160px'
-                        }).val(item.name || "").appendTo(row);
-
-                        $('<label/>', { class: 'opcua-lbl', text: 'GLOBAL-VAR' }).appendTo(row);
-                        const topic = $('<input/>', {
-                            type: 'text', class: 'opcua-inp', style: 'width:200px'
-                        }).val(item.topic || "").appendTo(row);
-
-                        $('<label/>', { class: 'opcua-lbl', text: 'datatype' }).appendTo(row);
-                        const dtype = $('<select/>', {
-                            class: 'opcua-inp', style: 'width:140px'
-                        }).appendTo(row);
-                        [
-                            "Boolean","SByte","Byte","Int16","UInt16","Int32","UInt32",
-                            "Float","Double","String","DateTime"
-                        ].forEach(function (t) {
-                            $('<option/>', { value: t }).text(t).appendTo(dtype);
-                        });
-                        dtype.val(item.dataType || "Int32");
-
-                        $('<label/>', { class: 'opcua-lbl', text: 'client write' }).appendTo(row);
-                        const wsel = $('<select/>', {
-                            class: 'opcua-inp', style: 'width:140px'
-                        }).appendTo(row);
-                        $('<option/>', { value: 'allow' }).text('toestaan').appendTo(wsel);
-                        $('<option/>', { value: 'deny' }).text('weigeren').appendTo(wsel);
-                        const writable = (item.writable === undefined) ? true : !!item.writable;
-                        wsel.val(writable ? 'allow' : 'deny');
-
-                        // koppel getter op het item
-                        $(container).data('getItem', function () {
-                            return {
-                                name: name.val(),
-                                topic: topic.val(),
-                                dataType: dtype.val(),
-                                writable: wsel.val() === 'allow'
-                            };
-                        });
-                    },
-                    removable: true,
-                    sortable: true
-                });
-
-            if (Array.isArray(parsed)) {
-                parsed.forEach(v => list.editableList('addItem', v));
-            }
-        },
-
-        oneditsave: function () {
-            const items = $("#node-input-variables-container").editableList('items');
-            const out = [];
-            items.each(function (i, el) {
-                const getter = $(el).data('getItem');
-                if (typeof getter === 'function') out.push(getter());
-            });
-            $("#node-input-variables").val(JSON.stringify(out));
-            this.variables = out;
-            this.allowAnonymous = $("#node-input-allowAnonymous").is(":checked");
-        }
+  function getVarsFromList() {
+    const items = $("#node-input-variables-container").editableList('items');
+    const out = [];
+    items.each(function (i, el) {
+      // getter is stored on the LI, fallback to inner row if needed
+      const getter = $(el).data('getItem') || $(el).find('.opcua-var-row').data('getItem');
+      if (typeof getter === 'function') out.push(getter());
     });
+    return out;
+  }
+
+  function setVarsToList(arr) {
+    const list = $("#node-input-variables-container");
+    list.editableList('empty');
+    if (Array.isArray(arr)) arr.forEach(v => list.editableList('addItem', v));
+  }
+
+  function toCsvAll() {
+    const cfg = readUiConfig();
+    const vars = getVarsFromList();
+    const lines = [];
+    lines.push("__CONFIG__");
+    lines.push("name," + escapeCsv(cfg.name));
+    lines.push("port," + escapeCsv(cfg.port));
+    lines.push("resourcePath," + escapeCsv(cfg.resourcePath));
+    lines.push("hostname," + escapeCsv(cfg.hostname));
+    lines.push("allowAnonymous," + (cfg.allowAnonymous ? "true" : "false"));
+    lines.push("__VARS__");
+    lines.push("name,topic,dataType,writable");
+    vars.forEach(it => {
+      const name = escapeCsv(it.name);
+      const topic = escapeCsv(it.topic);
+      const dt = escapeCsv(it.dataType || "Int32");
+      const wr = it && it.writable ? "true" : "false";
+      lines.push([name, topic, dt, wr].join(","));
+    });
+    return lines.join("\r\n");
+  }
+
+  function parseCsvAll(text) {
+    const rows = String(text).split(/\r?\n/).map(r => r.trim()).filter(r => r.length);
+    const cfg = {};
+    const vars = [];
+    let i = 0;
+
+    if (rows[i] !== "__CONFIG__") throw new Error("CSV missing __CONFIG__");
+    i++;
+
+    while (i < rows.length && rows[i] !== "__VARS__") {
+      const cols = splitCsvLine(rows[i]);
+      if (cols.length >= 2) {
+        const k = cols[0].toLowerCase();
+        const v = cols.slice(1).join(",");
+        if (k === "allowanonymous") cfg.allowAnonymous = String(v).toLowerCase() === "true";
+        else cfg[k] = v;
+      }
+      i++;
+    }
+
+    if (rows[i] !== "__VARS__") throw new Error("CSV missing __VARS__");
+    i++;
+
+    if (i >= rows.length) return { cfg, vars };
+    const header = splitCsvLine(rows[i]).map(h => h.toLowerCase());
+    const iName = header.indexOf("name");
+    const iTopic = header.indexOf("topic");
+    const iType = header.indexOf("datatype");
+    const iWritable = header.indexOf("writable");
+    i++;
+
+    for (; i < rows.length; i++) {
+      const cols = splitCsvLine(rows[i]);
+      if (!cols.length) continue;
+      const rec = {
+        name: iName >= 0 ? cols[iName] : "",
+        topic: iTopic >= 0 ? cols[iTopic] : "",
+        dataType: iType >= 0 ? cols[iType] : "Int32",
+        writable: iWritable >= 0 ? String(cols[iWritable]).toLowerCase() === "true" : true
+      };
+      if (rec.name || rec.topic) vars.push(rec);
+    }
+    return { cfg, vars };
+  }
+
+  /* ===== Node-RED editor definition ===== */
+
+  RED.nodes.registerType('opcua-server-nipper', {
+    category: 'nipper',
+    color: '#fcc91e',
+    icon: 'font-awesome/fa-server',
+    defaults: {
+      name: { value: "" },
+      port: { value: 4840, required: true, validate: RED.validators.number() },
+      resourcePath: { value: "/UA/MyServer", required: true },
+      hostname: { value: "0.0.0.0", required: true },
+      allowAnonymous: { value: true },
+      variables: { value: [] }
+    },
+    inputs: 1,
+    outputs: 1,
+    label: function () { return this.name || "opcua-server-nipper"; },
+
+    oneditprepare: function () {
+      $("#node-input-allowAnonymous").prop("checked", !!this.allowAnonymous);
+
+      let parsed = [];
+      try {
+        if (Array.isArray(this.variables)) {
+          parsed = this.variables;
+        } else if (typeof this.variables === "string" && this.variables.trim().length) {
+          parsed = JSON.parse(this.variables);
+        }
+      } catch (e) {
+        parsed = [];
+      }
+
+      const list = $("#node-input-variables-container")
+        .css('min-height', '240px')
+        .editableList({
+          addItem: function (container, i, item) {
+            item = item || {};
+
+            const row = $('<div/>', { class: 'opcua-var-row' }).appendTo(container);
+
+            $('<label/>', { class: 'opcua-lbl', text: 'Node identifier' }).appendTo(row);
+            const name = $('<input/>', {
+              type: 'text', class: 'opcua-inp', style: 'width:180px'
+            }).val(item.name || "").appendTo(row);
+
+            $('<label/>', { class: 'opcua-lbl', text: 'Global node-red' }).appendTo(row);
+            const topic = $('<input/>', {
+              type: 'text', class: 'opcua-inp', style: 'width:220px'
+            }).val(item.topic || "").appendTo(row);
+
+            $('<label/>', { class: 'opcua-lbl', text: 'Datatype' }).appendTo(row);
+            const dtype = $('<select/>', {
+              class: 'opcua-inp', style: 'width:160px'
+            }).appendTo(row);
+            [
+              "Boolean","SByte","Byte","Int16","UInt16","Int32","UInt32",
+              "Float","Double","String","DateTime"
+            ].forEach(function (t) {
+              $('<option/>', { value: t }).text(t).appendTo(dtype);
+            });
+            dtype.val(item.dataType || "Int32");
+
+            $('<label/>', { class: 'opcua-lbl', text: 'Client Write' }).appendTo(row);
+            const wsel = $('<select/>', {
+              class: 'opcua-inp', style: 'width:160px'
+            }).appendTo(row);
+            $('<option/>', { value: 'allow' }).text('Allow').appendTo(wsel);
+            $('<option/>', { value: 'deny' }).text('Deny').appendTo(wsel);
+            const writable = (item.writable === undefined) ? true : !!item.writable;
+            wsel.val(writable ? 'allow' : 'deny');
+
+            // store getter on the LI element that editableList returns later
+            const li = $(container).closest('li');
+            li.data('getItem', function () {
+              return {
+                name: name.val(),
+                topic: topic.val(),
+                dataType: dtype.val(),
+                writable: wsel.val() === 'allow'
+              };
+            });
+
+            // keep a fallback on the row too
+            $(row).data('getItem', li.data('getItem'));
+          },
+          removable: true,
+          sortable: true
+        });
+
+      if (Array.isArray(parsed)) {
+        parsed.forEach(v => list.editableList('addItem', v));
+      }
+
+      // wire import and export controls
+      const fileInput = document.getElementById("nipper-import-csv");
+      const btnExport = document.getElementById("nipper-export-csv");
+
+      if (fileInput) {
+        fileInput.addEventListener("change", function (e) {
+          const f = e.target.files && e.target.files[0];
+          if (!f) return;
+          const reader = new FileReader();
+          reader.onload = function () {
+            try {
+              const both = parseCsvAll(reader.result);
+              writeUiConfig(both.cfg);
+              setVarsToList(both.vars);
+              RED.notify("CSV imported", "success");
+            } catch (err) {
+              RED.notify("CSV import error, " + err.message, "error");
+            }
+          };
+          reader.readAsText(f);
+          fileInput.value = "";
+        });
+      }
+
+      if (btnExport) {
+        btnExport.addEventListener("click", function () {
+          try {
+            const csv = toCsvAll();
+            const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "opcua-server-nipper.csv";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            RED.notify("CSV export error, " + err.message, "error");
+          }
+        });
+      }
+    },
+
+    oneditsave: function () {
+      const out = getVarsFromList();
+      $("#node-input-variables").val(JSON.stringify(out));
+      this.variables = out;
+      this.allowAnonymous = $("#node-input-allowAnonymous").is(":checked");
+    }
+  });
 
 })();
 </script>
 
 <style>
-    .nr-field { margin-bottom: 8px; }
-    .opcua-var-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-    .opcua-lbl { width: 90px; display: inline-block; }
-    .opcua-inp { vertical-align: middle; }
+  .nr-field { margin-bottom: 8px; }
+  .opcua-var-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .opcua-lbl { width: 140px; display: inline-block; }
+  .opcua-inp { vertical-align: middle; }
 </style>
 
 <script type="text/x-red" data-template-name="opcua-server-nipper">
-    <div class="nr-field">
-        <label for="node-input-name">naam</label>
-        <input type="text" id="node-input-name">
-    </div>
+  <div class="nr-field">
+    <label for="node-input-name">Name</label>
+    <input type="text" id="node-input-name">
+  </div>
 
-    <div class="nr-field">
-        <label for="node-input-port">port</label>
-        <input type="number" id="node-input-port">
-    </div>
+  <div class="nr-field">
+    <label for="node-input-port">Port</label>
+    <input type="number" id="node-input-port">
+  </div>
 
-    <div class="nr-field">
-        <label for="node-input-resourcePath">resourcePath</label>
-        <input type="text" id="node-input-resourcePath" placeholder="/UA/MyServer">
-    </div>
+  <div class="nr-field">
+    <label for="node-input-resourcePath">Resource Path</label>
+    <input type="text" id="node-input-resourcePath" placeholder="/UA/MyServer">
+  </div>
 
-    <div class="nr-field">
-        <label for="node-input-hostname">hostname</label>
-        <input type="text" id="node-input-hostname" placeholder="0.0.0.0">
-    </div>
+  <div class="nr-field">
+    <label for="node-input-hostname">Hostname</label>
+    <input type="text" id="node-input-hostname" placeholder="0.0.0.0">
+  </div>
 
-    <div class="nr-field">
-        <label for="node-input-allowAnonymous">allowAnonymous</label>
-        <input type="checkbox" id="node-input-allowAnonymous">
-    </div>
+  <div class="nr-field">
+    <label for="node-input-allowAnonymous">Allow Anonymous</label>
+    <input type="checkbox" id="node-input-allowAnonymous">
+  </div>
 
-    <div class="nr-field">
-        <input type="hidden" id="node-input-variables">
-        <label>variabelen</label>
-        <div id="node-input-variables-container"></div>
-        <div>vul per rij naam, topic, datatype, en client write in</div>
-    </div>
+  <div class="nr-field">
+    <label>Import and Export</label>
+    <input type="file" id="nipper-import-csv" accept=".csv,text/csv">
+    <button id="nipper-export-csv" class="red-ui-button">Export CSV</button>
+  </div>
+
+  <div class="nr-field">
+    <input type="hidden" id="node-input-variables">
+    <label>Variables</label>
+    <div id="node-input-variables-container"></div>
+    <div>Fill per row: server variable, global variable, datatype, and client write access</div>
+  </div>
 </script>
 
 <script type="text/x-red" data-help-name="opcua-server-nipper">
-    <p>Start een OPC UA server en maakt variabelen aan, kies per variabele of een client mag schrijven of niet, schrijf vanuit je flow met msg.topic en msg.payload, een client write wordt geweigerd als je “weigeren” kiest</p>
+  <p>Starts an OPC UA server and creates variables. For each variable you can choose if a client is allowed to write. the namespaceindex is always one on each variable. Write from your flow using <code>msg.topic</code> and <code>msg.payload</code>. Client writes are rejected when set to Deny.</p>
+  <p>CSV import and export is supported. The CSV contains two blocks.</p>
+  <pre>__CONFIG__
+name,MyServer
+port,4840
+resourcePath,/UA/MyServer
+hostname,0.0.0.0
+allowAnonymous,true
+__VARS__
+name,topic,dataType,writable
+Speed,speed,Int32,true
+</pre>
 </script>
