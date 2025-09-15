@@ -1,0 +1,24 @@
+{
+  "name": "node-red-contrib-opcua-nipper",
+  "version": "1.0.0",
+  "description": "Eenvoudige OPC UA server node met variabelenlijst",
+  "keywords": ["node-red", "opcua", "opc ua", "server", "nipper"],
+  "author": "Ruben Konings",
+  "license": "MIT",
+  "dependencies": {
+    "node-opcua": "^2.120.0"
+  },
+  "node-red": {
+    "nodes": {
+      "opcua-server-nipper": "opcua-server-nipper.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ruben-Nipper/opcua-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ruben-Nipper/opcua-server/issues"
+  },
+  "homepage": "https://github.com/Ruben-Nipper/opcua-server#readme"
+}
