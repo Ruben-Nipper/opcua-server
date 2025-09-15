@@ -4,8 +4,8 @@
 
     function defaultVars() { return []; }
 
-    RED.nodes.registerType('opcua-server-Nipper', {
-        category: 'Nipper',
+    RED.nodes.registerType('opcua-server-nipper', {
+        category: 'nipper',
         color: '#fcc91e',
         icon: 'font-awesome/fa-server',
         defaults: {
@@ -18,7 +18,7 @@
         },
         inputs: 1,
         outputs: 1,
-        label: function () { return this.name || "opcua-server-Nipper"; },
+        label: function () { return this.name || "opcua-server-nipper"; },
 
         oneditprepare: function () {
             $("#node-input-allowAnonymous").prop("checked", !!this.allowAnonymous);
@@ -115,7 +115,7 @@
     .opcua-inp { vertical-align: middle; }
 </style>
 
-<script type="text/x-red" data-template-name="opcua-server-Nipper">
+<script type="text/x-red" data-template-name="opcua-server-nipper">
     <div class="nr-field">
         <label for="node-input-name">naam</label>
         <input type="text" id="node-input-name">
@@ -149,6 +149,6 @@
     </div>
 </script>
 
-<script type="text/x-red" data-help-name="opcua-server-Nipper">
+<script type="text/x-red" data-help-name="opcua-server-nipper">
     <p>Start een OPC UA server en maakt variabelen aan, kies per variabele of een client mag schrijven of niet, schrijf vanuit je flow met msg.topic en msg.payload, een client write wordt geweigerd als je “weigeren” kiest</p>
 </script>

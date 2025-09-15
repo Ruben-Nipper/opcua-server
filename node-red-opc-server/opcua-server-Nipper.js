@@ -230,5 +230,5 @@ module.exports = function (RED) {
         });
     }
 
-    RED.nodes.registerType("opcua-server-Nipper", OpcUaServerNode);
+    RED.nodes.registerType("opcua-server-nipper", OpcUaServerNode);
 };
