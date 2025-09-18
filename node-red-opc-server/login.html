@@ -1,0 +1,77 @@
+<!-- login.html -->
+<script type="text/javascript">
+(function () {
+    RED.nodes.registerType('login', {
+        category: 'nipper',
+        color: '#bfe3ff',
+        icon: 'font-awesome/fa-sign-in',
+        defaults: {
+            name: { value: "" },
+            proto: { value: "http", required: true },
+            host: { value: "localhost", required: true },
+            port: { value: 8081, required: true, validate: RED.validators.number() },
+            path: { value: "/wms/monitor/session/login", required: true },
+            pollSeconds: { value: 0, required: true, validate: v => !isNaN(v) && v >= 0 },
+            store: { value: "global", required: true }
+        },
+        credentials: {
+            username: { type: "text" },
+            password: { type: "password" }
+        },
+        inputs: 1,
+        outputs: 1,
+        label: function () { return this.name || "login"; }
+    });
+})();
+</script>
+
+<script type="text/x-red" data-template-name="login">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name">
+    </div>
+    <div class="form-row">
+        <label for="node-input-proto">Protocol</label>
+        <select id="node-input-proto">
+            <option value="http">http</option>
+            <option value="https">https</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-host">Host</label>
+        <input type="text" id="node-input-host" placeholder="localhost">
+    </div>
+    <div class="form-row">
+        <label for="node-input-port">Port</label>
+        <input type="number" id="node-input-port" placeholder="8081">
+    </div>
+    <div class="form-row">
+        <label for="node-input-path">Path</label>
+        <input type="text" id="node-input-path" placeholder="/wms/monitor/session/login">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pollSeconds">Poll (s)</label>
+        <input type="number" id="node-input-pollSeconds" placeholder="0 = disabled">
+    </div>
+    <div class="form-row">
+        <label for="node-input-store">Store</label>
+        <select id="node-input-store">
+            <option value="global">global</option>
+            <option value="flow">flow</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-username">Username</label>
+        <input type="text" id="node-input-username">
+    </div>
+    <div class="form-row">
+        <label for="node-input-password">Password</label>
+        <input type="password" id="node-input-password">
+    </div>
+</script>
+
+<script type="text/x-red" data-help-name="login">
+    <p>Performs a login request to the configured host and path.  
+    Stores the session token in flow or global context.  
+    Sends a message with the login result on success or failure.</p>
+</script>

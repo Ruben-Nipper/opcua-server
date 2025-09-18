@@ -1,0 +1,242 @@
+<!-- opcua-client-nipper.html -->
+<script type="text/javascript">
+(function () {
+
+  function parseCSV(text) {
+    // ondersteunt , en ; als scheidingsteken
+    const sep = text.indexOf(";") >= 0 && text.indexOf(",") === -1 ? ";" : ",";
+    const lines = text.replace(/\r/g,"").split("\n").filter(l => l.trim().length);
+    if (!lines.length) return [];
+    // kopregel optioneel
+    let start = 0;
+    const head = lines[0].trim().toLowerCase();
+    if (head.includes("topic") && head.includes("nodeid")) start = 1;
+
+    const rows = [];
+    for (let i = start; i < lines.length; i++) {
+      const cells = lines[i].split(sep).map(s => s.trim());
+      if (!cells.length) continue;
+      const topic    = cells[0] || "";
+      const nodeId   = cells[1] || "";
+      const dataType = cells[2] || "Auto";
+      const sampling = parseInt(cells[3] || "200", 10);
+      if (!nodeId) continue;
+      rows.push({ topic, nodeId, dataType, sampling: isNaN(sampling) ? 200 : sampling });
+    }
+    return rows;
+  }
+
+  function toCSV(items) {
+    const head = "topic,nodeId,dataType,sampling";
+    const lines = items.map(it => {
+      const t = (it.topic || "").replace(/"/g,'""');
+      const n = (it.nodeId || "").replace(/"/g,'""');
+      const d = (it.dataType || "Auto").replace(/"/g,'""');
+      const s = String(it.sampling == null ? "" : it.sampling);
+      // simpele csv (waarden zonder , of " meestal prima; anders quotes)
+      return `${t},${n},${d},${s}`;
+    });
+    return [head].concat(lines).join("\n");
+  }
+
+  RED.nodes.registerType('opcua-client-nipper', {
+    category: 'nipper',
+    color: '#cfe7ff',
+    icon: 'font-awesome/fa-plug',
+    defaults: {
+      name: { value: "" },
+      endpointUrl: { value: "opc.tcp://localhost:4840", required: true },
+      securityMode: { value: "None" },
+      securityPolicy: { value: "None" },
+      reconnectSeconds: { value: 5, required: true, validate: v => !isNaN(v) && v >= 1 },
+      items: { value: [] }      // [{topic,nodeId,dataType,sampling}]
+    },
+    inputs: 1,
+    outputs: 1,
+    label: function () { return this.name || "opcua-client-nipper"; },
+
+    oneditprepare: function () {
+      // lijst
+      const list = $("#node-input-items-container")
+        .css('min-height', '240px')
+        .editableList({
+          removable: true,
+          sortable: true,
+          addItem: function (container, i, item) {
+            item = item || {};
+            const row = $('<div/>', { class: 'oc-row' }).appendTo(container);
+
+            $('<label/>', { class: 'oc-l', text: 'Topic' }).appendTo(row);
+            const topic = $('<input/>', { type: 'text', class: 'oc-inp', style: 'width:160px' })
+              .val(item.topic || "").appendTo(row);
+
+            $('<label/>', { class: 'oc-l', text: 'NodeId' }).appendTo(row);
+            const nodeId = $('<input/>', { type: 'text', class: 'oc-inp', style: 'width:240px' })
+              .val(item.nodeId || "").appendTo(row);
+
+            $('<label/>', { class: 'oc-l', text: 'Type' }).appendTo(row);
+            const dtype = $('<select/>', { class: 'oc-inp', style: 'width:140px' }).appendTo(row);
+            [
+              "Auto","Boolean","SByte","Byte","Int16","UInt16","Int32","UInt32",
+              "Float","Double","String","DateTime"
+            ].forEach(t => $('<option/>', { value: t }).text(t).appendTo(dtype));
+            dtype.val(item.dataType || "Auto");
+
+            $('<label/>', { class: 'oc-l', text: 'Sampling ms' }).appendTo(row);
+            const samp = $('<input/>', { type: 'number', class: 'oc-inp', style: 'width:120px', min: 50 })
+              .val(item.sampling || 200).appendTo(row);
+
+            // getter opslaan op LI
+            const li = $(container).closest('li');
+            const getter = function () {
+              return {
+                topic: topic.val(),
+                nodeId: nodeId.val(),
+                dataType: dtype.val(),
+                sampling: parseInt(samp.val() || 200, 10)
+              };
+            };
+            li.data('getItem', getter);
+            $(row).data('getItem', getter);
+          }
+        });
+
+      // bestaande items
+      let parsed = [];
+      try {
+        if (Array.isArray(this.items)) parsed = this.items;
+        else if (typeof this.items === "string" && this.items.trim()) parsed = JSON.parse(this.items);
+      } catch(e) { parsed = []; }
+      parsed.forEach(v => list.editableList('addItem', v));
+
+      // CSV knoppen
+      const btnBar = $('<div class="oc-csvbar"></div>').insertBefore("#node-input-items-container");
+      const importBtn = $('<button class="red-ui-button">Import CSV</button>').appendTo(btnBar);
+      const exportBtn = $('<button class="red-ui-button">Export CSV</button>').css('margin-left','8px').appendTo(btnBar);
+
+      importBtn.on('click', function () {
+        const f = $('<input type="file" accept=".csv,text/csv">');
+        f.on('change', function (ev) {
+          const file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = function () {
+            try {
+              const rows = parseCSV(String(reader.result || ""));
+              if (!rows.length) { RED.notify("Geen geldige regels gevonden", "warning"); return; }
+              // lijst leeg en vullen
+              list.editableList('empty');
+              rows.forEach(r => list.editableList('addItem', r));
+              RED.notify("CSV geïmporteerd: " + rows.length + " regels", "success");
+            } catch (e) {
+              RED.notify("CSV import fout: " + e.message, "error");
+            }
+          };
+          reader.readAsText(file);
+        });
+        f.trigger('click');
+      });
+
+      exportBtn.on('click', function () {
+        // items ophalen
+        const items = $("#node-input-items-container").editableList('items');
+        const out = [];
+        items.each(function (i, el) {
+          const getter = $(el).data('getItem') || $(el).find('.oc-row').data('getItem');
+          if (typeof getter === "function") out.push(getter());
+        });
+        const csv = toCSV(out);
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'opcua-client-subscriptions.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 0);
+      });
+
+    }, // oneditprepare
+
+    oneditsave: function () {
+      const items = $("#node-input-items-container").editableList('items');
+      const out = [];
+      items.each(function (i, el) {
+        const getter = $(el).data('getItem') || $(el).find('.oc-row').data('getItem');
+        if (typeof getter === "function") out.push(getter());
+      });
+      this.items = out;
+    }
+  });
+
+})();
+</script>
+
+<style>
+  .oc-row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
+  .oc-l { width:90px; display:inline-block; }
+  .oc-inp { vertical-align:middle; }
+  .oc-csvbar { margin-bottom:6px; }
+</style>
+
+<script type="text/x-red" data-template-name="opcua-client-nipper">
+  <div class="form-row">
+    <label for="node-input-name">Name</label>
+    <input type="text" id="node-input-name" placeholder="client">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-endpointUrl">Endpoint</label>
+    <input type="text" id="node-input-endpointUrl" placeholder="opc.tcp://localhost:4840">
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-securityMode">Security Mode</label>
+    <select id="node-input-securityMode">
+      <option value="None">None</option>
+      <option value="Sign">Sign</option>
+      <option value="SignAndEncrypt">SignAndEncrypt</option>
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-securityPolicy">Security Policy</label>
+    <select id="node-input-securityPolicy">
+      <option value="None">None</option>
+      <option value="Basic128Rsa15">Basic128Rsa15</option>
+      <option value="Basic256">Basic256</option>
+      <option value="Basic256Sha256">Basic256Sha256</option>
+      <option value="Aes128_Sha256_RsaOaep">Aes128_Sha256_RsaOaep</option>
+      <option value="Aes256_Sha256_RsaPss">Aes256_Sha256_RsaPss</option>
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-reconnectSeconds">Reconnect seconds</label>
+    <input type="number" id="node-input-reconnectSeconds" min="1" value="5">
+  </div>
+
+  <div class="form-row">
+    <label>Subscriptions</label>
+    <!-- CSV knoppen komen hierboven -->
+    <div id="node-input-items-container"></div>
+    <p>CSV formaat: <code>topic,nodeId,dataType,sampling</code>  (scheidingsteken , of ;)</p>
+  </div>
+</script>
+
+<script type="text/x-red" data-help-name="opcua-client-nipper">
+  <p>OPC UA client. Subscribe op NodeIds, sla updates op in global met de topicnaam, en stuur updates uit.</p>
+  <p><b>CSV import/export</b> voor de subscriptions: kolommen <code>topic,nodeId,dataType,sampling</code>.</p>
+  <p><b>Schrijven</b> kan met topic of nodeId:</p>
+  <pre>
+  { "topic":"Speed", "payload": 123.4, "datatype":"Double" }
+  { "nodeId":"ns=1;s=Speed", "payload": 123, "datatype":"Int32" }
+  </pre>
+  <p><b>Lezen</b> één item:</p>
+  <pre>
+  { "action":"read", "topic":"Speed" }
+  </pre>
+</script>
